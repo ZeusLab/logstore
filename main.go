@@ -23,8 +23,10 @@ type LogMessage struct {
 
 func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	tagValues := r.URL.Query()["tag"]
-	if tagValues == nil || len(tagValues) == 0 {
+	defer func(w http.ResponseWriter) {
 		responseOk(w)
+	}(w)
+	if tagValues == nil || len(tagValues) == 0 {
 		return
 	}
 	tags := strings.Split(tagValues[0], ",")
@@ -41,7 +43,7 @@ func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 			var lm LogMessage
 			err = json.Unmarshal([]byte(text), &lm)
 			if err != nil {
-				log.Println(err)
+				log.Println("can not unmarshal log from json", err)
 				continue
 			}
 			if lm.Log == "" && lm.Message == "" {
@@ -59,9 +61,8 @@ func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	}
 	err = insert(lms)
 	if err != nil {
-		log.Println(err)
+		log.Println("insert log into log table in click-house get error", err)
 	}
-	responseOk(w)
 }
 
 func responseOk(w http.ResponseWriter) {
@@ -81,7 +82,7 @@ func main() {
 
 	err := createTableIfNotExist()
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("create logs table in click-house get error", err)
 	}
 
 	router := httprouter.New()

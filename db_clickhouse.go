@@ -2,6 +2,8 @@ package main
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"github.com/ClickHouse/clickhouse-go"
 	"log"
 	"time"
@@ -53,30 +55,23 @@ func toYYYYMMDD(timestamp int64) string {
 func insert(lms []LogMessage) error {
 	connect, err := sql.Open("clickhouse", "tcp://172.17.0.3:9000?debug=false")
 	if err != nil {
-		log.Fatal(err)
+		return errors.New(fmt.Sprintf("can not connect to click-house db %v", err))
 	}
 
 	if err := connect.Ping(); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
-			log.Printf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
-		} else {
-			log.Println(err)
+			return errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
 		}
-		log.Println(err)
 		return err
 	}
 
 	tx, err := connect.Begin()
 	if err != nil {
-		log.Println(err)
-		return err
+		return errors.New(fmt.Sprintf("open click-house tx get error %v", err))
 	}
 	stmt, _ := tx.Prepare(`INSERT INTO hermes.logs(application, timestamp, date, container_name, container_id, message) VALUES (?,?,?)`)
 	defer func() {
-		err = stmt.Close()
-		if err != nil {
-			log.Println(err)
-		}
+		_ = stmt.Close()
 	}()
 	for _, lm := range lms {
 		ts := int64(lm.Timestamp * 1000)
@@ -92,7 +87,11 @@ func insert(lms []LogMessage) error {
 		}
 	}
 	if err := tx.Commit(); err != nil {
-		return err
+		return errors.New(fmt.Sprintf("commit log to click-house db get error %v", err))
 	}
 	return nil
+}
+
+func selectLog(){
+	
 }

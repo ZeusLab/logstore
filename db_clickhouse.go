@@ -19,34 +19,19 @@ func getClickHouseUrl() string {
 	return fmt.Sprintf("tcp://%s?debug=%v", clickHouseAddress, debug)
 }
 
-func createTableIfNotExist() error {
+func openConnection() (*sql.DB, error) {
 	connect, err := sql.Open("clickhouse", getClickHouseUrl())
 	if err != nil {
-		log.Fatal(err)
+		return nil, errors.New(fmt.Sprintf("can not connect to click-house db %v", err))
 	}
 
 	if err := connect.Ping(); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
-			return errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
+			return nil, errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
 		}
-		return err
+		return nil, err
 	}
-	_, err = connect.Exec(`
-		CREATE TABLE IF NOT EXISTS hermes.logs (
-			application      String,
-			timestamp        Int64,
-			date             FixedString(8),
-			container_name   String,
-			container_id     String,
-			message          String
-		) ENGINE = MergeTree()
-		PARTITION BY (application, date)
-		ORDER BY (application, timestamp)
-	`)
-	if err != nil {
-		return err
-	}
-	return nil
+	return connect, nil
 }
 
 func toYYYYMMDD(timestamp int64) string {
@@ -54,34 +39,28 @@ func toYYYYMMDD(timestamp int64) string {
 }
 
 func insert(lms []LogMessage) error {
-	connect, err := sql.Open("clickhouse", getClickHouseUrl())
+	connect, err := openConnection()
 	if err != nil {
-		return errors.New(fmt.Sprintf("can not connect to click-house db %v", err))
+		return errors.New(fmt.Sprintf("can not open connection to click-house db %v", err))
 	}
-
-	if err := connect.Ping(); err != nil {
-		if exception, ok := err.(*clickhouse.Exception); ok {
-			return errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
-		}
-		return err
-	}
-
 	tx, err := connect.Begin()
 	if err != nil {
 		return errors.New(fmt.Sprintf("open click-house tx get error %v", err))
 	}
-	stmt, _ := tx.Prepare(`INSERT INTO hermes.logs(application, timestamp, date, container_name, container_id, message) VALUES (?,?,?,?,?,?)`)
+	stmt, _ := tx.Prepare(`INSERT INTO hermes.logs(id, application, timestamp, date, container_name, container_id, message) VALUES (?,?,?,?,?,?)`)
 	defer func() {
 		_ = stmt.Close()
 	}()
 	for _, lm := range lms {
 		_, err := stmt.Exec(
+			lm.Id,
 			lm.Tag,
 			lm.Timestamp,
 			toYYYYMMDD(lm.Timestamp),
 			lm.ContainerName,
 			lm.ContainerId,
-			lm.Message)
+			*lm.Message,
+		)
 		if err != nil {
 			log.Println(err)
 		}
@@ -92,6 +71,51 @@ func insert(lms []LogMessage) error {
 	return nil
 }
 
-func selectLog(application, date string) {
+func selectLog(application, date string, limit int) ([]LogMessage, error) {
+	connect, err := openConnection()
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("can not open connection to click-house db %v", err))
+	}
+	defer func() {
+		_ = connect.Close()
+	}()
+	rows, err := connect.Query(`SELECT id, container_id, container_name, timestamp, message FROM hermes.logs
+		WHERE (application = ? AND date = ?)
+		ORDER BY timestamp DESC
+		LIMIT ?
+	`, application, date, limit)
+	if err != nil {
+		return nil, err
+	}
 
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	lms := make([]LogMessage, 0)
+	for rows.Next() {
+		var (
+			id            int64
+			containerId   string
+			containerName string
+			timestamp     int64
+			message       string
+		)
+		if err := rows.Scan(&id, &containerId, &containerName, &timestamp, &message); err != nil {
+			return nil, err
+		}
+		lms = append(lms, LogMessage{
+			Id:            id,
+			Tag:           application,
+			Date:          date,
+			ContainerId:   containerId,
+			ContainerName: containerName,
+			Timestamp:     timestamp,
+			Message:       &message,
+		})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return lms, nil
 }

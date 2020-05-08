@@ -11,15 +11,28 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 )
 
 type LogMessage struct {
+	Id            int64   `json:"id"`
 	Tag           string  `json:"fluentd_tag"`
-	Timestamp     int64 `json:"fluentd_time"`
-	Message       string  `json:"message"`
+	Date          string  `json:"date"`
+	Timestamp     int64   `json:"fluentd_time"`
 	ContainerId   string  `json:"container_id"`
 	ContainerName string  `json:"container_name"`
-	Log           string  `json:"log"`
+	Message       *string `json:"message"`
+	Log           *string `json:"log"`
+}
+
+type Logs struct {
+	Code    int          `json:"code"`
+	Message string       `json:"message"`
+	Data    []LogMessage `json:"data"`
+}
+
+func isStringNilOrEmpty(s *string) bool {
+	return s == nil || strings.TrimSpace(*s) == ""
 }
 
 func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
@@ -41,7 +54,7 @@ func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	for scanner.Scan() {
 		text := scanner.Text()
 		if text != "" {
-			if debug{
+			if debug {
 				log.Println(text)
 			}
 			var lm LogMessage
@@ -50,15 +63,16 @@ func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 				log.Println("can not unmarshal log from json", err)
 				continue
 			}
-			if lm.Log == "" && lm.Message == "" {
+			if isStringNilOrEmpty(lm.Log) && isStringNilOrEmpty(lm.Message) {
 				continue
 			}
-			if lm.Log == "" {
+			if isStringNilOrEmpty(lm.Log) {
 				lm.Log = lm.Message
 			}
 			lm.Message = lm.Log
 			for _, tag := range tags {
 				lm.Tag = tag
+				lm.Id = int64(snowFlake.Generate())
 				lms = append(lms, lm)
 			}
 		}
@@ -77,20 +91,63 @@ func responseOk(w http.ResponseWriter) {
 	}
 }
 
+func MarshallJson(v interface{}) ([]byte, error) {
+	bytes, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return bytes, nil
+}
+
 func retrieveLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	responseOk(w)
+	tagValues := r.URL.Query()["tag"]
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Server", "zeus-mfe-master")
+	w.WriteHeader(200)
+	logs := Logs{
+		Code:    200,
+		Message: "OK",
+	}
+	defer func(l *Logs) {
+		response, err := MarshallJson(l)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		_, _ = w.Write(response)
+	}(&logs)
+	if tagValues == nil || len(tagValues) == 0 {
+		logs.Code = http.StatusBadRequest
+		logs.Message = "missing tag"
+		return
+	}
+
+	dateValues := r.URL.Query()["date"]
+	date := time.Now().Format("20060102")
+	if dateValues != nil && len(dateValues) > 0 {
+		date = dateValues[0]
+	}
+	lms, err := selectLog(tagValues[0], date, 100)
+	if err != nil {
+		logs.Code = http.StatusInternalServerError
+		logs.Message = err.Error()
+		return
+	}
+	logs.Data = lms
 }
 
 func main() {
 	log.SetOutput(os.Stdout)
 
-	flag.StringVar(&clickHouseAddress, "ch-address","clickhouse:9000","address of click-house database")
+	flag.StringVar(&clickHouseAddress, "ch-address", "clickhouse:9000", "address of click-house database")
 	flag.BoolVar(&debug, "debug", false, "in debug mode, more message will be displayed")
+	flag.Int64Var(&nodeId, "node-id", 1, "node id")
 	flag.Parse()
 
-	err := createTableIfNotExist()
+	var err error
+	snowFlake, err = NewNode(nodeId)
 	if err != nil {
-		log.Fatal("create logs table in click-house get error", err)
+		log.Fatal(err)
 	}
 
 	router := httprouter.New()

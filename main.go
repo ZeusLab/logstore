@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"github.com/julienschmidt/httprouter"
 	"io/ioutil"
@@ -14,7 +15,7 @@ import (
 
 type LogMessage struct {
 	Tag           string  `json:"fluentd_tag"`
-	Timestamp     float64 `json:"fluentd_time"`
+	Timestamp     int64 `json:"fluentd_time"`
 	Message       string  `json:"message"`
 	ContainerId   string  `json:"container_id"`
 	ContainerName string  `json:"container_name"`
@@ -40,6 +41,9 @@ func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	for scanner.Scan() {
 		text := scanner.Text()
 		if text != "" {
+			if debug{
+				log.Println(text)
+			}
 			var lm LogMessage
 			err = json.Unmarshal([]byte(text), &lm)
 			if err != nil {
@@ -79,6 +83,10 @@ func retrieveLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 
 func main() {
 	log.SetOutput(os.Stdout)
+
+	flag.StringVar(&clickHouseAddress, "ch-address","clickhouse:9000","address of click-house database")
+	flag.BoolVar(&debug, "debug", false, "in debug mode, more message will be displayed")
+	flag.Parse()
 
 	err := createTableIfNotExist()
 	if err != nil {

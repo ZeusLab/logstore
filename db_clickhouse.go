@@ -15,32 +15,33 @@ import (
 └─────────────┴───────────────┴────────────┴──────────────────────┘────────────────────┘─────────────┘
  */
 
+func getClickHouseUrl() string {
+	return fmt.Sprintf("tcp://%s?debug=%v", clickHouseAddress, debug)
+}
+
 func createTableIfNotExist() error {
-	connect, err := sql.Open("clickhouse", "tcp://172.17.0.3:9000?debug=false")
+	connect, err := sql.Open("clickhouse", getClickHouseUrl())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	if err := connect.Ping(); err != nil {
 		if exception, ok := err.(*clickhouse.Exception); ok {
-			log.Printf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace)
-		} else {
-			log.Println(err)
+			return errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
 		}
-		log.Println(err)
 		return err
 	}
 	_, err = connect.Exec(`
 		CREATE TABLE IF NOT EXISTS hermes.logs (
-			application  	 String,
-			timestamp 	     Int64,
-			date         	 FixedString(8),
+			application      String,
+			timestamp        Int64,
+			date             FixedString(8),
 			container_name   String,
-			container_id	 String,
-			message  		String
+			container_id     String,
+			message          String
 		) ENGINE = MergeTree()
 		PARTITION BY (application, date)
-		ORDER BY timestamp
+		ORDER BY (application, timestamp)
 	`)
 	if err != nil {
 		return err
@@ -53,7 +54,7 @@ func toYYYYMMDD(timestamp int64) string {
 }
 
 func insert(lms []LogMessage) error {
-	connect, err := sql.Open("clickhouse", "tcp://172.17.0.3:9000?debug=false")
+	connect, err := sql.Open("clickhouse", getClickHouseUrl())
 	if err != nil {
 		return errors.New(fmt.Sprintf("can not connect to click-house db %v", err))
 	}
@@ -69,16 +70,15 @@ func insert(lms []LogMessage) error {
 	if err != nil {
 		return errors.New(fmt.Sprintf("open click-house tx get error %v", err))
 	}
-	stmt, _ := tx.Prepare(`INSERT INTO hermes.logs(application, timestamp, date, container_name, container_id, message) VALUES (?,?,?)`)
+	stmt, _ := tx.Prepare(`INSERT INTO hermes.logs(application, timestamp, date, container_name, container_id, message) VALUES (?,?,?,?,?,?)`)
 	defer func() {
 		_ = stmt.Close()
 	}()
 	for _, lm := range lms {
-		ts := int64(lm.Timestamp * 1000)
 		_, err := stmt.Exec(
 			lm.Tag,
-			ts,
-			toYYYYMMDD(ts),
+			lm.Timestamp,
+			toYYYYMMDD(lm.Timestamp),
 			lm.ContainerName,
 			lm.ContainerId,
 			lm.Message)
@@ -92,6 +92,6 @@ func insert(lms []LogMessage) error {
 	return nil
 }
 
-func selectLog(){
-	
+func selectLog(application, date string) {
+
 }

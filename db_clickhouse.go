@@ -19,21 +19,25 @@ import (
  */
 
 type RetreiveLogOption struct {
-	Limit       int
-	Id          int64
-	Application string
-	Date        string
-	Head        bool
-	Greps       []string
+	Limit         int
+	Id            int64
+	Application   string
+	Date          string
+	Head          bool
+	Greps         []string
+	ContainerName *string
+	ContainerId   *string
 }
 
 var errorMissingTag = errors.New("missing tag")
 
 func createOption(values url.Values) (*RetreiveLogOption, error) {
 	opt := RetreiveLogOption{
-		Limit: 100,
-		Head:  false,
-		Id:    0,
+		Limit:         100,
+		Head:          false,
+		Id:            0,
+		ContainerName: nil,
+		ContainerId:   nil,
 	}
 	tagValues := values["tag"]
 	if tagValues == nil || len(tagValues) == 0 {
@@ -66,6 +70,14 @@ func createOption(values url.Values) (*RetreiveLogOption, error) {
 
 	if values["is_head"] != nil && len(values["is_head"]) > 0 {
 		opt.Head = true
+	}
+
+	if values["container_name"] != nil && len(values["container_name"]) > 0 {
+		opt.ContainerName = &values["container_name"][0]
+	}
+
+	if values["container_id"] != nil && len(values["container_id"]) > 0 {
+		opt.ContainerId = &values["container_id"][0]
 	}
 
 	opt.Greps = values["greps"]
@@ -169,11 +181,12 @@ func selectLogWithOpt(option RetreiveLogOption) ([]LogMessage, error) {
 		_ = connect.Close()
 	}()
 
-	ordered := "DESC"
-	if option.Head {
-		ordered = "ASC"
-	}
+	//create parameters
+	parameters := make([]interface{}, 0)
+	parameters = append(parameters, option.Application)
+	parameters = append(parameters, option.Date)
 
+	//build grep condition
 	grepCondition := ""
 	if option.Greps != nil && len(option.Greps) > 0 {
 		s := make([]string, 0)
@@ -183,6 +196,28 @@ func selectLogWithOpt(option RetreiveLogOption) ([]LogMessage, error) {
 		grepCondition = fmt.Sprintf("AND (%s)", strings.Join(s, " AND "))
 	}
 
+	if option.Greps != nil && len(option.Greps) > 0 {
+		parameters = append(parameters, option.Greps)
+	}
+
+	//build container condition
+	containers := make([]string, 0)
+	if option.ContainerName != nil {
+		containers = append(containers, "container_name = ?")
+		parameters = append(parameters, *option.ContainerName)
+	}
+
+	if option.ContainerId != nil {
+		containers = append(containers, "container_id = ?")
+		parameters = append(parameters, *option.ContainerId)
+	}
+
+	containerCondition := ""
+	if len(containers) > 0 {
+		containerCondition = fmt.Sprintf("AND (%s)", strings.Join(containers, " AND "))
+	}
+
+	//build id condition
 	idCondition := ""
 	if option.Head {
 		idCondition = "id > ?"
@@ -192,20 +227,21 @@ func selectLogWithOpt(option RetreiveLogOption) ([]LogMessage, error) {
 			idCondition = "id > ?"
 		}
 	}
-
-	parameters := make([]interface{}, 0)
-	parameters = append(parameters, option.Application)
-	parameters = append(parameters, option.Date)
-	if option.Greps != nil && len(option.Greps) > 0 {
-		parameters = append(parameters, option.Greps)
-	}
 	parameters = append(parameters, option.Id)
+
+	// build limit and order
+	ordered := "DESC"
+	if option.Head {
+		ordered = "ASC"
+	}
 	parameters = append(parameters, option.Limit)
+
+	// create query
 	query := fmt.Sprintf(`SELECT id, container_id, container_name, timestamp, message FROM hermes.logs
-		WHERE (application = ? AND date = ?) %s
+		WHERE (application = ? AND date = ?) %s %s
 		AND %s
 		ORDER BY timestamp %s
-		LIMIT ?`, grepCondition, idCondition, ordered)
+		LIMIT ?`, grepCondition, containerCondition, idCondition, ordered)
 
 	log.Printf(`query %s 
 with params %+v

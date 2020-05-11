@@ -43,7 +43,7 @@ func isStringNilOrEmpty(s *string) bool {
 	return s == nil || strings.TrimSpace(*s) == ""
 }
 
-func collectLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func collectLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	tagValues := r.URL.Query()["tag"]
 	defer func(w http.ResponseWriter) {
 		responseOk(w)
@@ -107,7 +107,7 @@ func MarshallJson(v interface{}) ([]byte, error) {
 	return bytes, nil
 }
 
-func retriveListApplication(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func retriveListApplication(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "zeus-mfe-master")
 	w.WriteHeader(200)
@@ -135,7 +135,7 @@ func retriveListApplication(w http.ResponseWriter, r *http.Request, ps httproute
 	response.Data = list
 }
 
-func retrieveLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+func retrieveLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "zeus-mfe-master")
 	w.WriteHeader(200)

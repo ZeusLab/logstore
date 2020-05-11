@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go"
 	"log"
+	"net/url"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -14,6 +17,60 @@ import (
 │ postgresql  │ 1588842127114 │ 20200507   │ /athena_postgres_1   │ 1f5552dba15dd0df   │ Hello world │
 └─────────────┴───────────────┴────────────┴──────────────────────┘────────────────────┘─────────────┘
  */
+
+type RetreiveLogOption struct {
+	Limit       int
+	Id          int64
+	Application string
+	Date        string
+	Head        bool
+	Greps       []string
+}
+
+var errorMissingTag = errors.New("missing tag")
+
+func createOption(values url.Values) (*RetreiveLogOption, error) {
+	opt := RetreiveLogOption{
+		Limit: 100,
+		Head:  false,
+		Id:    0,
+	}
+	tagValues := values["tag"]
+	if tagValues == nil || len(tagValues) == 0 {
+		return nil, errorMissingTag
+	}
+	opt.Application = tagValues[0]
+	limits := values["limit"]
+	if limits != nil && len(limits) > 0 {
+		v, err := strconv.Atoi(limits[0])
+		if err != nil {
+			return nil, err
+		}
+		opt.Limit = v
+	}
+
+	dateValues := values["date"]
+	opt.Date = time.Now().Format("20060102")
+	if dateValues != nil && len(dateValues) > 0 {
+		opt.Date = dateValues[0]
+	}
+
+	ids := values["id"]
+	if ids != nil && len(ids) > 0 {
+		v, err := strconv.Atoi(ids[0])
+		if err != nil {
+			return nil, err
+		}
+		opt.Id = int64(v)
+	}
+
+	if values["is_head"] != nil && len(values["is_head"]) > 0 {
+		opt.Head = true
+	}
+
+	opt.Greps = values["greps"]
+	return &opt, nil
+}
 
 func getClickHouseUrl() string {
 	return fmt.Sprintf("tcp://%s?debug=%v", clickHouseAddress, debug)
@@ -26,6 +83,7 @@ func openConnection() (*sql.DB, error) {
 	}
 
 	if err := connect.Ping(); err != nil {
+		_ = connect.Close()
 		if exception, ok := err.(*clickhouse.Exception); ok {
 			return nil, errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
 		}
@@ -71,7 +129,7 @@ func insert(lms []LogMessage) error {
 	return nil
 }
 
-func selectLog(application, date string, limit int) ([]LogMessage, error) {
+func selectDistinctApplication() ([]string, error) {
 	connect, err := openConnection()
 	if err != nil {
 		return nil, errors.New(fmt.Sprintf("can not open connection to click-house db %v", err))
@@ -79,11 +137,81 @@ func selectLog(application, date string, limit int) ([]LogMessage, error) {
 	defer func() {
 		_ = connect.Close()
 	}()
-	rows, err := connect.Query(`SELECT id, container_id, container_name, timestamp, message FROM hermes.logs
-		WHERE (application = ? AND date = ?)
-		ORDER BY timestamp DESC
-		LIMIT ?
-	`, application, date, limit)
+	rows, err := connect.Query(`select distinct(application) from hermes.logs`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	list := make([]string, 0)
+	for rows.Next() {
+		var appName string
+		if err := rows.Scan(&appName); err != nil {
+			return nil, err
+		}
+		list = append(list, appName)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
+func selectLogWithOpt(option RetreiveLogOption) ([]LogMessage, error) {
+	connect, err := openConnection()
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("can not open connection to click-house db %v", err))
+	}
+	defer func() {
+		_ = connect.Close()
+	}()
+
+	ordered := "DESC"
+	if option.Head {
+		ordered = "ASC"
+	}
+
+	grepCondition := ""
+	if option.Greps != nil && len(option.Greps) > 0 {
+		s := make([]string, 0)
+		for i := 0; i < len(option.Greps); i++ {
+			s = append(s, fmt.Sprintf("positionCaseInsensitive(message, ?) > 0"))
+		}
+		grepCondition = fmt.Sprintf("AND (%s)", strings.Join(s, " AND "))
+	}
+
+	idCondition := ""
+	if option.Head {
+		idCondition = "id > ?"
+	} else {
+		idCondition = "id < ?"
+		if option.Id == 0 {
+			idCondition = "id > ?"
+		}
+	}
+
+	parameters := make([]interface{}, 0)
+	parameters = append(parameters, option.Application)
+	parameters = append(parameters, option.Date)
+	if option.Greps != nil && len(option.Greps) > 0 {
+		parameters = append(parameters, option.Greps)
+	}
+	parameters = append(parameters, option.Id)
+	parameters = append(parameters, option.Limit)
+	query := fmt.Sprintf(`SELECT id, container_id, container_name, timestamp, message FROM hermes.logs
+		WHERE (application = ? AND date = ?) %s
+		AND %s
+		ORDER BY timestamp %s
+		LIMIT ?`, grepCondition, idCondition, ordered)
+
+	log.Printf(`query %s 
+with params %+v
+`, query, parameters)
+
+	rows, err := connect.Query(query, parameters...)
 	if err != nil {
 		return nil, err
 	}
@@ -106,8 +234,8 @@ func selectLog(application, date string, limit int) ([]LogMessage, error) {
 		}
 		lms = append(lms, LogMessage{
 			Id:            id,
-			Tag:           application,
-			Date:          date,
+			Tag:           option.Application,
+			Date:          option.Date,
 			ContainerId:   containerId,
 			ContainerName: containerName,
 			Timestamp:     timestamp,

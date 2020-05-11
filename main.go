@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"os"
 	"strings"
-	"time"
 )
 
 type LogMessage struct {
@@ -21,14 +20,23 @@ type LogMessage struct {
 	Timestamp     int64   `json:"fluentd_time"`
 	ContainerId   string  `json:"container_id"`
 	ContainerName string  `json:"container_name"`
-	Message       *string `json:"message"`
-	Log           *string `json:"log"`
+	Message       *string `json:"message,omitempty"`
+	Log           *string `json:"log,omitempty"`
+}
+
+type CommonResponse struct {
+	Code    int    `json:"code"`
+	Message string `json:"message"`
 }
 
 type Logs struct {
-	Code    int          `json:"code"`
-	Message string       `json:"message"`
-	Data    []LogMessage `json:"data"`
+	CommonResponse
+	Data []LogMessage `json:"data"`
+}
+
+type Applications struct {
+	CommonResponse
+	Data []string `json:"data"`
 }
 
 func isStringNilOrEmpty(s *string) bool {
@@ -99,46 +107,77 @@ func MarshallJson(v interface{}) ([]byte, error) {
 	return bytes, nil
 }
 
-func retrieveLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
-	tagValues := r.URL.Query()["tag"]
+func retriveListApplication(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "zeus-mfe-master")
 	w.WriteHeader(200)
-	logs := Logs{
-		Code:    200,
-		Message: "OK",
+	response := Applications{
+		CommonResponse: CommonResponse{
+			Code:    200,
+			Message: "OK",
+		},
+	}
+	defer func(l *Applications) {
+		bytes, err := MarshallJson(l)
+		if err != nil {
+			response.Code = http.StatusInternalServerError
+			response.Message = err.Error()
+		}
+		_, _ = w.Write(bytes)
+	}(&response)
+
+	list, err := selectDistinctApplication()
+	if err != nil {
+		response.Code = http.StatusInternalServerError
+		response.Message = err.Error()
+		return
+	}
+	response.Data = list
+}
+
+func retrieveLog(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Server", "zeus-mfe-master")
+	w.WriteHeader(200)
+	response := Logs{
+		CommonResponse: CommonResponse{
+			Code:    200,
+			Message: "OK",
+		},
 	}
 	defer func(l *Logs) {
-		response, err := MarshallJson(l)
+		bytes, err := MarshallJson(l)
 		if err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
+			response.Code = http.StatusInternalServerError
+			response.Message = err.Error()
+		}
+		_, _ = w.Write(bytes)
+	}(&response)
+
+	opts, err := createOption(r.URL.Query())
+	if err != nil {
+		if err == errorMissingTag {
+			response.Code = http.StatusBadRequest
+			response.Message = "missing tag"
 			return
 		}
-		_, _ = w.Write(response)
-	}(&logs)
-	if tagValues == nil || len(tagValues) == 0 {
-		logs.Code = http.StatusBadRequest
-		logs.Message = "missing tag"
+
+		response.Code = http.StatusInternalServerError
+		response.Message = err.Error()
 		return
 	}
 
-	dateValues := r.URL.Query()["date"]
-	date := time.Now().Format("20060102")
-	if dateValues != nil && len(dateValues) > 0 {
-		date = dateValues[0]
-	}
-	lms, err := selectLog(tagValues[0], date, 100)
+	lms, err := selectLogWithOpt(*opts)
 	if err != nil {
-		logs.Code = http.StatusInternalServerError
-		logs.Message = err.Error()
+		response.Code = http.StatusInternalServerError
+		response.Message = err.Error()
 		return
 	}
-	logs.Data = lms
+	response.Data = lms
 }
 
 func main() {
 	log.SetOutput(os.Stdout)
-
 	flag.StringVar(&clickHouseAddress, "ch-address", "clickhouse:9000", "address of click-house database")
 	flag.BoolVar(&debug, "debug", false, "in debug mode, more message will be displayed")
 	flag.Int64Var(&nodeId, "node-id", 1, "node id")
@@ -153,5 +192,6 @@ func main() {
 	router := httprouter.New()
 	router.POST("/log", collectLog)
 	router.GET("/log", retrieveLog)
+	router.GET("/application", retriveListApplication)
 	log.Fatal(http.ListenAndServe(":80", router))
 }

@@ -141,6 +141,37 @@ func insert(lms []LogMessage) error {
 	return nil
 }
 
+func selectAppHistories(application string) ([]string, error) {
+	connect, err := openConnection()
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("can not open connection to click-house db %v", err))
+	}
+	defer func() {
+		_ = connect.Close()
+	}()
+	rows, err := connect.Query(`select distinct(application) from hermes.logs`)
+	if err != nil {
+		return nil, err
+	}
+
+	defer func() {
+		_ = rows.Close()
+	}()
+
+	list := make([]string, 0)
+	for rows.Next() {
+		var appName string
+		if err := rows.Scan(&appName); err != nil {
+			return nil, err
+		}
+		list = append(list, appName)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return list, nil
+}
+
 func selectDistinctApplication() ([]string, error) {
 	connect, err := openConnection()
 	if err != nil {

@@ -39,6 +39,11 @@ type Applications struct {
 	Data []string `json:"data"`
 }
 
+type Histories struct {
+	CommonResponse
+	Data []string `json:"data"`
+}
+
 func isStringNilOrEmpty(s *string) bool {
 	return s == nil || strings.TrimSpace(*s) == ""
 }
@@ -105,6 +110,26 @@ func MarshallJson(v interface{}) ([]byte, error) {
 		return nil, err
 	}
 	return bytes, nil
+}
+
+func retriveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Server", "zeus-mfe-master")
+	w.WriteHeader(200)
+	response := Histories{
+		CommonResponse: CommonResponse{
+			Code:    200,
+			Message: "OK",
+		},
+	}
+	defer func(l *Histories) {
+		bytes, err := MarshallJson(l)
+		if err != nil {
+			response.Code = http.StatusInternalServerError
+			response.Message = err.Error()
+		}
+		_, _ = w.Write(bytes)
+	}(&response)
 }
 
 func retriveListApplication(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
@@ -193,5 +218,6 @@ func main() {
 	router.POST("/log", collectLog)
 	router.GET("/log", retrieveLog)
 	router.GET("/application", retriveListApplication)
+	router.GET("/histories", retriveHistory)
 	log.Fatal(http.ListenAndServe(":80", router))
 }

@@ -130,6 +130,28 @@ func retriveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 		}
 		_, _ = w.Write(bytes)
 	}(&response)
+
+	tags := r.URL.Query()["tag"]
+	if tags == nil || len(tags) <= 0 {
+		response.Code = http.StatusBadRequest
+		response.Message = "missing tag"
+		return
+	}
+
+	list, err := selectAppHistories(tags[0])
+	if err != nil {
+		response.Code = http.StatusInternalServerError
+		response.Message = err.Error()
+		return
+	}
+
+	rs := make([]string, 0)
+	for _, v := range list {
+		r := fmt.Sprintf("%s-%02s-%02s", v[0:4], v[5:6], v[7:8])
+		rs = append(rs, r)
+	}
+
+	response.Data = rs
 }
 
 func retriveListApplication(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {

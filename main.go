@@ -41,7 +41,12 @@ type Applications struct {
 
 type Histories struct {
 	CommonResponse
-	Data []string `json:"data"`
+	Data []HistoryItem `json:"data"`
+}
+
+type HistoryItem struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
 }
 
 func isStringNilOrEmpty(s *string) bool {
@@ -145,10 +150,13 @@ func retriveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 		return
 	}
 
-	rs := make([]string, 0)
+	rs := make([]HistoryItem, 0)
 	for _, v := range list {
 		r := fmt.Sprintf("%s-%02s-%02s", v[0:4], v[5:6], v[7:8])
-		rs = append(rs, r)
+		rs = append(rs, HistoryItem{
+			Key:   v,
+			Value: r,
+		})
 	}
 
 	response.Data = rs

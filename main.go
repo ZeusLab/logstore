@@ -14,6 +14,7 @@ import (
 )
 
 type LogMessage struct {
+	IdStr         string  `json:"id_str"`
 	Id            int64   `json:"id"`
 	Tag           string  `json:"fluentd_tag"`
 	Date          string  `json:"date"`

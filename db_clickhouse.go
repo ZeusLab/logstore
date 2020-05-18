@@ -305,6 +305,7 @@ with params %+v
 		}
 		lms = append(lms, LogMessage{
 			Id:            id,
+			IdStr:         fmt.Sprintf("%d", id),
 			Tag:           option.Application,
 			Date:          option.Date,
 			ContainerId:   containerId,

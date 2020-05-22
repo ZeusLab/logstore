@@ -69,7 +69,7 @@ func createOption(values url.Values) (*RetreiveLogOption, error) {
 	}
 
 	if values["is_head"] != nil && len(values["is_head"]) > 0 {
-		opt.Head = true
+		opt.Head, _ = strconv.ParseBool(values["is_head"][0])
 	}
 
 	if values["container_name"] != nil && len(values["container_name"]) > 0 {

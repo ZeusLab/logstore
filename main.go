@@ -118,7 +118,7 @@ func MarshallJson(v interface{}) ([]byte, error) {
 	return bytes, nil
 }
 
-func retriveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+func retrieveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "zeus-mfe-master")
 	w.WriteHeader(200)
@@ -153,7 +153,7 @@ func retriveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 
 	rs := make([]HistoryItem, 0)
 	for _, v := range list {
-		r := fmt.Sprintf("%s-%02s-%02s", v[0:4], v[5:6], v[7:8])
+		r := fmt.Sprintf("%s-%02s-%02s", v[0:4], v[4:6], v[6:8])
 		rs = append(rs, HistoryItem{
 			Key:   v,
 			Value: r,
@@ -163,7 +163,7 @@ func retriveHistory(w http.ResponseWriter, r *http.Request, _ httprouter.Params)
 	response.Data = rs
 }
 
-func retriveListApplication(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
+func retrieveListApplication(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Server", "zeus-mfe-master")
 	w.WriteHeader(200)
@@ -229,6 +229,10 @@ func retrieveLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		response.Message = err.Error()
 		return
 	}
+	for i := len(lms)/2-1; i >= 0; i-- {
+		opp := len(lms)-1-i
+		lms[i], lms[opp] = lms[opp], lms[i]
+	}
 	response.Data = lms
 }
 
@@ -246,9 +250,9 @@ func main() {
 	}
 
 	router := httprouter.New()
-	router.POST("/log", collectLog)
-	router.GET("/log", retrieveLog)
-	router.GET("/application", retriveListApplication)
-	router.GET("/histories", retriveHistory)
+	router.POST("/api/logs", collectLog)
+	router.GET("/api/logs", retrieveLog)
+	router.GET("/api/applications", retrieveListApplication)
+	router.GET("/api/histories", retrieveHistory)
 	log.Fatal(http.ListenAndServe(":80", router))
 }

@@ -150,8 +150,8 @@ func selectAppHistories(application string) ([]string, error) {
 		_ = connect.Close()
 	}()
 
-	log.Println(`select distinct(date) from hermes.logs where application = ? with parameter: `, application)
-	rows, err := connect.Query(`select distinct(date) from hermes.logs where application = ?`, application)
+	log.Println(`select distinct(date) from hermes.logs where application = ? order by date desc with parameter: `, application)
+	rows, err := connect.Query(`select distinct(date) from hermes.logs where application = ? order by date desc`, application)
 	if err != nil {
 		return nil, err
 	}

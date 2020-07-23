@@ -229,8 +229,8 @@ func retrieveLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		response.Message = err.Error()
 		return
 	}
-	for i := len(lms)/2-1; i >= 0; i-- {
-		opp := len(lms)-1-i
+	for i := len(lms)/2 - 1; i >= 0; i-- {
+		opp := len(lms) - 1 - i
 		lms[i], lms[opp] = lms[opp], lms[i]
 	}
 	response.Data = lms
@@ -239,12 +239,20 @@ func retrieveLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 func main() {
 	log.SetOutput(os.Stdout)
 	flag.StringVar(&clickHouseAddress, "ch-address", "clickhouse:9000", "address of click-house database")
+	flag.IntVar(&minActiveConnection, "ch-conn-min", 0, "minimum number of active connection")
+	flag.IntVar(&maxActiveConnection, "ch-conn-max", 1, "maximum number of active connection")
+	flag.Int64Var(&maxConnectionLifeTime, "ch-conn-ttl", 30000, "maximum inactive duration of connection")
 	flag.BoolVar(&debug, "debug", false, "in debug mode, more message will be displayed")
 	flag.Int64Var(&nodeId, "node-id", 1, "node id")
 	flag.Parse()
 
 	var err error
 	snowFlake, err = NewNode(nodeId)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	dbPool, err = CreateCHPool(0, 10, 60000, "")
 	if err != nil {
 		log.Fatal(err)
 	}

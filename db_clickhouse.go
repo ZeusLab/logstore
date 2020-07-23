@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -17,6 +18,187 @@ import (
 │ postgresql  │ 1588842127114 │ 20200507   │ /athena_postgres_1   │ 1f5552dba15dd0df   │ Hello world │
 └─────────────┴───────────────┴────────────┴──────────────────────┘────────────────────┘─────────────┘
  */
+
+const (
+	DatabaseName = "hermes"
+	LogTableName = "hermes.logs"
+)
+
+var (
+	errPoolBusy   = errors.New("pool too busy")
+	errPoolClosed = errors.New("pool is closed")
+)
+
+type LogEntry struct {
+	Id            int64
+	Tag           string
+	Timestamp     int64
+	Date          string
+	ContainerName *string
+	Level         string
+	Message       string
+	ContextKeys   []string
+	ContextValues []string
+}
+
+/**
+ClickHouse connection pool
+ */
+
+type Connection struct {
+	closed bool
+	conn   *sql.DB
+	ts     int64
+}
+
+func (c *Connection) close() error {
+	c.closed = true
+	c.ts = 0
+	return c.conn.Close()
+}
+
+type CHPool struct {
+	sync.Mutex
+	pool        chan *Connection
+	dsn         string
+	maxActive   int
+	maxLifeTime int64
+	minActive   int
+	nowActive   int
+	isClosed    bool
+}
+
+func CreateCHPool(min, max int, maxLifeTime int64, dsn string) (*CHPool, error) {
+	if max < min {
+		return nil, errors.New("max must be larger than min")
+	}
+
+	if min < 0 || max <= 0 {
+		return nil, errors.New("number of active connection must larger than zero")
+	}
+
+	chPool := &CHPool{
+		dsn:         dsn,
+		minActive:   min,
+		maxActive:   max,
+		nowActive:   0,
+		pool:        make(chan *Connection, max),
+		maxLifeTime: maxLifeTime,
+		isClosed:    false,
+	}
+
+	for i := 0; i < min; i++ {
+		_, err := chPool.openConnection()
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	go chPool.closeInActiveConnection()
+	return chPool, nil
+}
+
+func (p *CHPool) closeInActiveConnection() {
+	t := time.NewTicker(1 * time.Second)
+	for {
+		<-t.C
+		now := time.Now().Unix()
+		for ; ; {
+			if p.nowActive == 0 {
+				break
+			}
+			c, err := p.acquireWithTimeout(100 * time.Millisecond)
+			if err != nil || c == nil {
+				break
+			}
+
+			if now-c.ts > p.maxLifeTime {
+				_ = c.close()
+				p.nowActive--
+				continue
+			}
+
+			_ = p.release(c)
+			break
+		}
+	}
+}
+
+func (p *CHPool) openConnection() (*Connection, error) {
+	connect, err := sql.Open("clickhouse", p.dsn)
+	if err != nil {
+		return nil, errors.New(fmt.Sprintf("can not connect to click-house db %v", err))
+	}
+
+	if err := connect.Ping(); err != nil {
+		_ = connect.Close()
+		if exception, ok := err.(*clickhouse.Exception); ok {
+			return nil, errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
+		}
+		return nil, err
+	}
+	c := &Connection{
+		closed: false,
+		conn:   connect,
+		ts:     time.Now().Unix(),
+	}
+	p.pool <- c
+	p.nowActive ++
+	return c, nil
+}
+
+func (p *CHPool) acquireWithTimeout(t time.Duration) (conn *Connection, err error) {
+	p.Lock()
+	defer p.Unlock()
+	if p.isClosed {
+		err = errPoolClosed
+		return
+	}
+	select {
+	case conn = <-p.pool:
+		err = nil
+		break
+	case <-time.After(t):
+		conn = nil
+		err = errPoolBusy
+		break
+	}
+	if err != nil && p.nowActive < p.maxActive {
+		conn, err = p.openConnection()
+	}
+	conn.ts = time.Now().Unix()
+	return
+}
+
+func (p *CHPool) acquire() (conn *Connection, err error) {
+	return p.acquireWithTimeout(30 * time.Second)
+}
+
+func (p *CHPool) release(conn *Connection) error {
+	p.Lock()
+	defer p.Unlock()
+	if p.isClosed {
+		_ = conn.close()
+		return nil
+	}
+	if p.nowActive >= p.maxActive {
+		_ = conn.close()
+		return nil
+	}
+	conn.ts = time.Now().Unix()
+	p.pool <- conn
+	p.nowActive--
+	return nil
+}
+
+func (p *CHPool) close() error {
+	p.Lock()
+	defer p.Unlock()
+	p.isClosed = true
+	return nil
+}
+
+// end of ClickHouse connection pool
 
 type RetreiveLogOption struct {
 	Limit         int
@@ -84,25 +266,9 @@ func createOption(values url.Values) (*RetreiveLogOption, error) {
 	return &opt, nil
 }
 
-func getClickHouseUrl() string {
-	return fmt.Sprintf("tcp://%s?debug=%v", clickHouseAddress, debug)
-}
-
-func openConnection() (*sql.DB, error) {
-	connect, err := sql.Open("clickhouse", getClickHouseUrl())
-	if err != nil {
-		return nil, errors.New(fmt.Sprintf("can not connect to click-house db %v", err))
-	}
-
-	if err := connect.Ping(); err != nil {
-		_ = connect.Close()
-		if exception, ok := err.(*clickhouse.Exception); ok {
-			return nil, errors.New(fmt.Sprintf("[%d] %s \n%s\n", exception.Code, exception.Message, exception.StackTrace))
-		}
-		return nil, err
-	}
-	return connect, nil
-}
+//func getClickHouseUrl() string {
+//	return fmt.Sprintf("tcp://%s?debug=%v", clickHouseAddress, debug)
+//}
 
 func toYYYYMMDD(timestamp int64) string {
 	return time.Unix(0, timestamp*int64(time.Millisecond)).Format("20060102")

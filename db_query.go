@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 )
 
 var dbPool *CHPool
@@ -62,7 +63,14 @@ func (c *Connection) getHistoryOfTag(tag string) ([]string, error) {
 }
 
 type SelectLogOption struct {
+	Tag    string
+	Limit  string
+	LastId int64
+	Date   string
+}
 
+func createSelectLogOption(r http.Request) (opt SelectLogOption, err error) {
+	return
 }
 
 func (c *Connection) getLog(opt SelectLogOption) ([]LogEntry, error) {
@@ -74,18 +82,19 @@ func (c *Connection) insert(logs []LogEntry) error {
 	if err != nil {
 		return errors.New(fmt.Sprintf("open click-house tx get error %v", err))
 	}
-	insertScript := fmt.Sprintf(`INSERT INTO %s(id, tag, timestamp, date, container_name, message, context.keys, context.values) VALUES (?,?,?,?,?,?,?,?)`, LogTableName)
+	insertScript := fmt.Sprintf(`INSERT INTO %s(id, tag, timestamp, date, container_name, level, message, context.keys, context.values) VALUES (?,?,?,?,?,?,?,?,?)`, LogTableName)
 	stmt, _ := tx.Prepare(insertScript)
 	defer func() {
 		_ = stmt.Close()
 	}()
 	for _, logEntry := range logs {
 		_, err := stmt.Exec(
-			logEntry.Id,
+			int64(snowFlake.Generate()),
 			logEntry.Tag,
 			logEntry.Timestamp,
 			toYYYYMMDD(logEntry.Timestamp),
 			logEntry.ContainerName,
+			logEntry.Level,
 			logEntry.Message,
 			logEntry.ContextKeys,
 			logEntry.ContextValues,

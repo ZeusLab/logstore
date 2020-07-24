@@ -8,7 +8,7 @@ clean:
 
 build:
 	env CGO_ENABLED=0 go build -ldflags="-s -w" -o docker_build/hermes
-	
+
 release:
 	env CGO_ENABLED=0 go build -ldflags="-s -w" -o docker_build/hermes . && upx --brute ./docker_build/hermes
 	rm -rf ./docker_build/hermes.upx

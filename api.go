@@ -83,11 +83,11 @@ func collectLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 				continue
 			}
 			logEntries = append(logEntries, LogEntry{
-				Id:            int64(snowFlake.Generate()),
 				Tag:           tag,
 				Timestamp:     inputLog.Timestamp,
-				Date:          toYYYYMMDD(inputLog.Timestamp),
 				ContainerName: inputLog.ContainerName,
+				Message:       inputLog.Message,
+				Level:         inputLog.Level,
 				ContextKeys:   mapKeys(inputLog.Context),
 				ContextValues: mapValues(inputLog.Context),
 			})
@@ -180,7 +180,7 @@ func retrieveListOfTag(w http.ResponseWriter, r *http.Request, _ httprouter.Para
 			Message: "OK",
 		},
 	}
-	defer writeResponse(w, response)
+	defer writeResponse(w, &response)
 
 	c, err := dbPool.acquire()
 	if err != nil {
@@ -215,7 +215,7 @@ func retrieveListOfTagHistory(w http.ResponseWriter, r *http.Request, _ httprout
 			Message: "OK",
 		},
 	}
-	defer writeResponse(w, response)
+	defer writeResponse(w, &response)
 
 	c, err := dbPool.acquire()
 	if err != nil {
@@ -268,13 +268,13 @@ func retrieveLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 			Message: "OK",
 		},
 	}
-	defer writeResponse(w, response)
+	defer writeResponse(w, &response)
 
-	opts, err := createOption(r.URL.Query())
+	opts, err := createSelectLogOption(*r)
 	if err != nil {
 		if err == errorMissingTag {
 			response.Code = http.StatusBadRequest
-			response.Message = "missing tag"
+			response.Message = errorMissingTag.Error()
 			return
 		}
 
@@ -300,7 +300,7 @@ func retrieveLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 		_ = dbPool.release(c)
 	}()
 
-	logEntries, err := c.getLog()
+	logEntries, err := c.getLog(opts)
 	if err != nil {
 		response.Code = http.StatusInternalServerError
 		response.Message = err.Error()

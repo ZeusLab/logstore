@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"github.com/ClickHouse/clickhouse-go"
-	"net/url"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -23,8 +21,9 @@ const (
 )
 
 var (
-	errPoolBusy   = errors.New("pool too busy")
-	errPoolClosed = errors.New("pool is closed")
+	errPoolBusy     = errors.New("pool too busy")
+	errPoolClosed   = errors.New("pool is closed")
+	errorMissingTag = errors.New("missing tag")
 )
 
 type LogEntry struct {
@@ -198,79 +197,73 @@ func (p *CHPool) close() error {
 
 // end of ClickHouse connection pool
 
-type RetreiveLogOption struct {
-	Limit         int
-	Id            int64
-	Application   string
-	Date          string
-	Head          bool
-	Greps         []string
-	ContainerName *string
-	ContainerId   *string
-}
-
-var errorMissingTag = errors.New("missing tag")
-
-func createOption(values url.Values) (*RetreiveLogOption, error) {
-	opt := RetreiveLogOption{
-		Limit:         100,
-		Head:          false,
-		Id:            0,
-		ContainerName: nil,
-		ContainerId:   nil,
-	}
-	tagValues := values["tag"]
-	if tagValues == nil || len(tagValues) == 0 {
-		return nil, errorMissingTag
-	}
-	opt.Application = tagValues[0]
-	limits := values["limit"]
-	if limits != nil && len(limits) > 0 {
-		v, err := strconv.Atoi(limits[0])
-		if err != nil {
-			return nil, err
-		}
-		opt.Limit = v
-	}
-
-	dateValues := values["date"]
-	opt.Date = time.Now().Format("20060102")
-	if dateValues != nil && len(dateValues) > 0 {
-		opt.Date = dateValues[0]
-	}
-
-	ids := values["id"]
-	if ids != nil && len(ids) > 0 {
-		v, err := strconv.Atoi(ids[0])
-		if err != nil {
-			return nil, err
-		}
-		opt.Id = int64(v)
-	}
-
-	if values["is_head"] != nil && len(values["is_head"]) > 0 {
-		opt.Head, _ = strconv.ParseBool(values["is_head"][0])
-	}
-
-	if values["container_name"] != nil && len(values["container_name"]) > 0 {
-		opt.ContainerName = &values["container_name"][0]
-	}
-
-	if values["container_id"] != nil && len(values["container_id"]) > 0 {
-		opt.ContainerId = &values["container_id"][0]
-	}
-
-	opt.Greps = values["greps"]
-	return &opt, nil
-}
+//type RetreiveLogOption struct {
+//	Limit         int
+//	Id            int64
+//	Application   string
+//	Date          string
+//	Head          bool
+//	Greps         []string
+//	ContainerName *string
+//	ContainerId   *string
+//}
+//
+//func createOption(values url.Values) (*RetreiveLogOption, error) {
+//	opt := RetreiveLogOption{
+//		Limit:         100,
+//		Head:          false,
+//		Id:            0,
+//		ContainerName: nil,
+//		ContainerId:   nil,
+//	}
+//	tagValues := values["tag"]
+//	if tagValues == nil || len(tagValues) == 0 {
+//		return nil, errorMissingTag
+//	}
+//	opt.Application = tagValues[0]
+//	limits := values["limit"]
+//	if limits != nil && len(limits) > 0 {
+//		v, err := strconv.Atoi(limits[0])
+//		if err != nil {
+//			return nil, err
+//		}
+//		opt.Limit = v
+//	}
+//
+//	dateValues := values["date"]
+//	opt.Date = time.Now().Format("20060102")
+//	if dateValues != nil && len(dateValues) > 0 {
+//		opt.Date = dateValues[0]
+//	}
+//
+//	ids := values["id"]
+//	if ids != nil && len(ids) > 0 {
+//		v, err := strconv.Atoi(ids[0])
+//		if err != nil {
+//			return nil, err
+//		}
+//		opt.Id = int64(v)
+//	}
+//
+//	if values["is_head"] != nil && len(values["is_head"]) > 0 {
+//		opt.Head, _ = strconv.ParseBool(values["is_head"][0])
+//	}
+//
+//	if values["container_name"] != nil && len(values["container_name"]) > 0 {
+//		opt.ContainerName = &values["container_name"][0]
+//	}
+//
+//	if values["container_id"] != nil && len(values["container_id"]) > 0 {
+//		opt.ContainerId = &values["container_id"][0]
+//	}
+//
+//	opt.Greps = values["greps"]
+//	return &opt, nil
+//}
 
 //func getClickHouseUrl() string {
 //	return fmt.Sprintf("tcp://%s?debug=%v", clickHouseAddress, debug)
 //}
-
-func toYYYYMMDD(timestamp int64) string {
-	return time.Unix(0, timestamp*int64(time.Millisecond)).Format("20060102")
-}
 
 //func selectLogWithOpt(option RetreiveLogOption) ([]LogMessage, error) {
 //	connect, err := openConnection()

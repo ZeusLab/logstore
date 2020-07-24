@@ -2,39 +2,86 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"github.com/julienschmidt/httprouter"
+	. "hermes/core"
 	"log"
 	"net/http"
 	"os"
+	"path/filepath"
 )
 
 var version = "1.0.0"
+var config HermesConfig
+var drivers = make(map[string]LogDriver)
+var mainStorage LogDriver
 
 func main() {
 	log.SetOutput(os.Stdout)
-	flag.StringVar(&clickHouseAddress, "ch-address", "clickhouse:9000", "address of click-house database")
-	flag.IntVar(&minActiveConnection, "ch-conn-min", 0, "minimum number of active connection")
-	flag.IntVar(&maxActiveConnection, "ch-conn-max", 1, "maximum number of active connection")
-	flag.Int64Var(&maxConnectionLifeTime, "ch-conn-ttl", 30000, "maximum inactive duration of connection")
-	flag.BoolVar(&debug, "debug", false, "in debug mode, more message will be displayed")
-	flag.Int64Var(&nodeId, "node-id", 1, "node id")
+	flag.IntVar(&port, "port", 0, "")
+	flag.Int64Var(&nodeId, "node", 0, "")
+	flag.StringVar(&configFile, "config", "", "")
 	flag.Parse()
 
 	var err error
-	snowFlake, err = NewNode(nodeId)
+
+	/** init id generator */
+	err = InitIdGenerator(nodeId)
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	dbPool, err = CreateCHPool(0, 10, 60000, "")
+	/** init working directory and read configuration */
+	workDir, err := filepath.Abs(".")
 	if err != nil {
 		log.Fatal(err)
+	}
+
+	if !StrIsEmpty(configFile) {
+		workDir, _ = filepath.Split(configFile)
+	} else {
+		configFile = filepath.Join(workDir, "config.yaml")
+	}
+
+	config, err = ReadConfig(configFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	/** init drivers */
+	for _, opt := range config.Drivers {
+		driver, ok := drivers[opt.Name]
+		if !ok || driver == nil {
+			log.Fatal(fmt.Errorf("not found driver with name %s", opt.Name))
+		}
+		err = driver.Start(opt)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if opt.IsMainStorage {
+			if mainStorage != nil {
+				log.Fatalln("found two driver are configured as main storage")
+			}
+			mainStorage = driver
+		}
+	}
+
+	if mainStorage == nil {
+		log.Fatalln("not found any driver is configured as main storage")
 	}
 
 	router := httprouter.New()
-	router.POST("/api/logs", collectLog)
-	router.GET("/api/logs", retrieveLog)
-	router.GET("/api/applications", retrieveListOfTag)
-	router.GET("/api/histories", retrieveListOfTagHistory)
-	log.Fatal(http.ListenAndServe(":80", router))
+	router.POST("/api/log", collectLog)
+	router.GET("/api/tag", retrieveListOfTag)
+
+	p := config.Port
+	if port > 0 {
+		p = port
+	}
+
+	if p <= 0 {
+		log.Fatal("port number must not be negative")
+	}
+
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", p), router))
 }

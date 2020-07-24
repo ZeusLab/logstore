@@ -1,4 +1,4 @@
-package main
+package core
 
 import (
 	"encoding/base64"
@@ -9,6 +9,17 @@ import (
 	"sync"
 	"time"
 )
+
+var SnowFlake *Node
+
+func InitIdGenerator(nodeId int64) (err error) {
+	SnowFlake, err = NewNode(nodeId)
+	return
+}
+
+func NextId() int64 {
+	return int64(SnowFlake.Generate())
+}
 
 var (
 	// Epoch is set to the twitter snowflake epoch of Nov 04 2010 01:42:54 UTC in milliseconds

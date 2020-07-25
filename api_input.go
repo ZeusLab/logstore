@@ -36,9 +36,6 @@ func collectLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 	for scanner.Scan() {
 		text := scanner.Text()
 		if text != "" {
-			if debug {
-				log.Println(text)
-			}
 			var inputLog InputLogPayload
 			err = json.Unmarshal([]byte(text), &inputLog)
 			if err != nil {
@@ -48,6 +45,7 @@ func collectLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 			if StrIsEmpty(inputLog.Message) {
 				continue
 			}
+			inputLog.Tag = tag
 			inputs = append(inputs, inputLog)
 		}
 	}

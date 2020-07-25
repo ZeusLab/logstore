@@ -18,7 +18,7 @@ import (
 
 const (
 	DatabaseName = "hermes"
-	LogTableName = "hermes.logs"
+	LogTableName = "logs"
 )
 
 var (
@@ -32,13 +32,14 @@ ClickHouse connection pool
  */
 type CHPool struct {
 	sync.Mutex
-	pool        chan *Connection
-	dsn         string
-	maxActive   int
-	maxLifeTime int64
-	minActive   int
-	nowActive   int
-	isClosed    bool
+	pool          chan *Connection
+	dsn           string
+	maxActive     int
+	maxLifeTime   int64
+	minActive     int
+	currentActive int
+	currentInUsed int
+	isClosed      bool
 }
 
 func CreateCHPool(min, max int, maxLifeTime int64, dsn string) (*CHPool, error) {
@@ -51,13 +52,14 @@ func CreateCHPool(min, max int, maxLifeTime int64, dsn string) (*CHPool, error) 
 	}
 
 	chPool := &CHPool{
-		dsn:         dsn,
-		minActive:   min,
-		maxActive:   max,
-		nowActive:   0,
-		pool:        make(chan *Connection, max),
-		maxLifeTime: maxLifeTime,
-		isClosed:    false,
+		dsn:           dsn,
+		minActive:     min,
+		maxActive:     max,
+		currentActive: 0,
+		currentInUsed: 0,
+		pool:          make(chan *Connection, max),
+		maxLifeTime:   maxLifeTime,
+		isClosed:      false,
 	}
 
 	for i := 0; i < min; i++ {
@@ -71,45 +73,59 @@ func CreateCHPool(min, max int, maxLifeTime int64, dsn string) (*CHPool, error) 
 	return chPool, nil
 }
 
-func (p *CHPool) closeInActiveConnection() {
-	p.Lock()
-	defer p.Unlock()
+func (p *CHPool) scheduleToCloseInActiveConnection() {
 	t := time.NewTicker(1 * time.Second)
 	for {
 		<-t.C
-		if p.isClosed {
+		if !p.closeInActiveConnection() {
 			t.Stop()
 			break
 		}
-		now := time.Now().Unix()
-		for ; ; {
-			if p.nowActive == 0 {
-				break
-			}
+	}
+}
 
-			var c *Connection
-			select {
-			case c = <-p.pool:
-				p.nowActive --
-				break
-			case <-time.After(100 * time.Millisecond):
-				c = nil
-				break
-			}
-			if c == nil {
-				break
-			}
-
-			if now-c.ts > p.maxLifeTime {
-				log.Println("close inactive connection to ClickHouse database")
-				_ = c.Close()
-				continue
-			}
-
-			_ = p.Release(c)
+func (p *CHPool) closeInActiveConnection() bool {
+	p.Lock()
+	defer p.Unlock()
+	if p.isClosed {
+		return false
+	}
+	now := time.Now().Unix()
+	for ; ; {
+		if p.currentActive == 0 {
 			break
 		}
+
+		c, err := p.AcquireWithTimeout(100 * time.Millisecond)
+		if c == nil || err != nil {
+			break
+		}
+
+		if now-c.ts > p.maxLifeTime {
+			log.Println("close inactive connection to ClickHouse database")
+			_ = c.Close()
+			p.currentActive--
+			continue
+		}
+
+		_ = p.Release(c)
+		break
 	}
+	return true
+}
+
+func (p *CHPool) getAvailableConn(t time.Duration) (conn *Connection, err error) {
+	select {
+	case conn = <-p.pool:
+		p.currentInUsed++
+		err = nil
+		break
+	case <-time.After(t):
+		conn = nil
+		err = errPoolBusy
+		break
+	}
+	return
 }
 
 func (p *CHPool) openConnection() (*Connection, error) {
@@ -131,7 +147,7 @@ func (p *CHPool) openConnection() (*Connection, error) {
 		ts:     time.Now().Unix(),
 	}
 	p.pool <- c
-	p.nowActive ++
+	p.currentActive ++
 	return c, nil
 }
 
@@ -142,25 +158,19 @@ func (p *CHPool) AcquireWithTimeout(t time.Duration) (conn *Connection, err erro
 		err = errPoolClosed
 		return
 	}
-	select {
-	case conn = <-p.pool:
-		p.nowActive --
-		err = nil
-		break
-	case <-time.After(t):
-		conn = nil
-		err = errPoolBusy
-		break
-	}
-	if err != nil && p.nowActive < p.maxActive {
+	conn, err = p.getAvailableConn(t)
+	if err != nil && p.currentActive < p.maxActive {
 		conn, err = p.openConnection()
 	}
-	conn.ts = time.Now().Unix()
+
+	if conn != nil {
+		conn.ts = time.Now().Unix()
+	}
 	return
 }
 
 func (p *CHPool) Acquire() (conn *Connection, err error) {
-	return p.AcquireWithTimeout(30 * time.Second)
+	return p.AcquireWithTimeout(5 * time.Second)
 }
 
 func (p *CHPool) Release(conn *Connection) error {
@@ -168,15 +178,12 @@ func (p *CHPool) Release(conn *Connection) error {
 	defer p.Unlock()
 	if p.isClosed {
 		_ = conn.Close()
-		return nil
-	}
-	if p.nowActive >= p.maxActive {
-		_ = conn.Close()
+		p.currentActive--
 		return nil
 	}
 	conn.ts = time.Now().Unix()
 	p.pool <- conn
-	p.nowActive++
+	p.currentInUsed--
 	return nil
 }
 
@@ -184,14 +191,14 @@ func (p *CHPool) Close() error {
 	p.Lock()
 	defer p.Unlock()
 	p.isClosed = true
-	for i := 0; p.nowActive > 0 && i < p.maxActive; i++ {
-		select {
-		case conn := <-p.pool:
+	for i := 0; p.currentActive > 0 && i < p.maxActive; i++ {
+		conn, err := p.getAvailableConn(1 * time.Second)
+		if err != nil || conn == nil {
+			break
+		}
+		if conn != nil {
 			_ = conn.Close()
-			p.nowActive--
-			break
-		case <-time.After(200 * time.Millisecond):
-			break
+			p.currentActive--
 		}
 	}
 	return nil

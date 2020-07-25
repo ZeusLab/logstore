@@ -54,7 +54,7 @@ func main() {
 		if !ok || driver == nil {
 			log.Fatal(fmt.Errorf("not found driver with name %s", opt.Name))
 		}
-		err = driver.Start(opt)
+		err = driver.Open(opt)
 		if err != nil {
 			log.Fatal(err)
 		}
@@ -66,6 +66,12 @@ func main() {
 		}
 	}
 
+	defer func() {
+		for _, driver := range drivers {
+			_ = driver.Close()
+		}
+	}()
+
 	if mainStorage == nil {
 		log.Fatalln("not found any driver is configured as main storage")
 	}
@@ -73,6 +79,7 @@ func main() {
 	router := httprouter.New()
 	router.POST("/api/log", collectLog)
 	router.GET("/api/tag", retrieveListOfTag)
+	router.GET("/ws", webSocket)
 
 	p := config.Port
 	if port > 0 {

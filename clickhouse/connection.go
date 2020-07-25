@@ -22,7 +22,7 @@ func (c *Connection) Close() error {
 }
 
 func (c *Connection) GetAllTags() ([]string, error) {
-	selectScript := fmt.Sprintf(`query select distinct(application) from %s`, LogTableName)
+	selectScript := fmt.Sprintf(`query select distinct(application) from %s.%s`, DatabaseName, LogTableName)
 	log.Println(`query: `, selectScript)
 	rows, err := c.conn.Query(selectScript)
 	if err != nil {
@@ -67,7 +67,7 @@ func (c *Connection) Insert(logs []LogEntry) error {
 	if err != nil {
 		return errors.New(fmt.Sprintf("open click-house tx get error %v", err))
 	}
-	insertScript := fmt.Sprintf(`INSERT INTO %s(id, tag, timestamp, date, container_name, level, message, context.keys, context.values) VALUES (?,?,?,?,?,?,?,?,?)`, LogTableName)
+	insertScript := fmt.Sprintf(`INSERT INTO %s.%s(id, tag, timestamp, date, container_name, level, message, context.keys, context.values) VALUES (?,?,?,?,?,?,?,?,?)`, DatabaseName, LogTableName)
 	stmt, _ := tx.Prepare(insertScript)
 	defer func() {
 		_ = stmt.Close()

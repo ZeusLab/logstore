@@ -5,6 +5,8 @@ drivers:
     options:
       - 'minActiveConn=0'
       - 'maxActiveConn=1'
+      - 'maxInActiveTime=300000'
+      - 'address=clickhouse:9000'
   - name: file
     options:
       - 'option=value'

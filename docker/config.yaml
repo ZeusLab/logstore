@@ -3,10 +3,12 @@ drivers:
   - name: clickhouse
     main_storage: true
     options:
-      - 'minActiveConn=0'
-      - 'maxActiveConn=1'
+      - 'dsnopts=database=hermes'
+      - 'dsnopts=debug=false'
+      - 'minActiveConn=20'
+      - 'maxActiveConn=100'
       - 'maxInActiveTime=300000'
-      - 'address=clickhouse:9000'
-  - name: file
-    options:
-      - 'option=value'
+      - 'address=localhost:9000'
+#  - name: file
+#    options:
+#      - 'option=value'

@@ -22,8 +22,8 @@ func (c *Connection) Close() error {
 }
 
 func (c *Connection) GetAllTags() ([]string, error) {
-	selectScript := fmt.Sprintf(`query select distinct(application) from %s.%s`, DatabaseName, LogTableName)
-	log.Println(`query: `, selectScript)
+	selectScript := fmt.Sprintf(`SELECT DISTINCT(tag) FROM %s.%s`, DatabaseName, LogTableName)
+	log.Println(`query:`, selectScript)
 	rows, err := c.conn.Query(selectScript)
 	if err != nil {
 		return nil, err

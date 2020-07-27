@@ -5,6 +5,7 @@ import (
 	"fmt"
 	. "hermes/clickhouse"
 	. "hermes/core"
+	"log"
 	"strconv"
 	"strings"
 )
@@ -72,6 +73,7 @@ func (d *DriverClickHouse) Open(config DriverConfig) (err error) {
 	if len(dbOptions) > 0 {
 		dsn = fmt.Sprintf("tcp://%s?%s", dbAddress, strings.Join(dbOptions, "&"))
 	}
+	log.Printf("clickhouse dsn %s\n", dsn)
 	d.Pool, err = CreateCHPool(minActiveConn, maxActiveConn, maxInActiveTime, dsn)
 	if err != nil {
 		return

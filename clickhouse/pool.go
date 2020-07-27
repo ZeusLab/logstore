@@ -69,12 +69,12 @@ func CreateCHPool(min, max int, maxLifeTime int64, dsn string) (*CHPool, error) 
 		}
 	}
 
-	go chPool.closeInActiveConnection()
+	go chPool.scheduleToCloseInActiveConnection()
 	return chPool, nil
 }
 
 func (p *CHPool) scheduleToCloseInActiveConnection() {
-	t := time.NewTicker(1 * time.Second)
+	t := time.NewTicker(5 * time.Second)
 	for {
 		<-t.C
 		if !p.closeInActiveConnection() {
@@ -96,7 +96,7 @@ func (p *CHPool) closeInActiveConnection() bool {
 			break
 		}
 
-		c, err := p.AcquireWithTimeout(100 * time.Millisecond)
+		c, err := p.getAvailableConn(100 * time.Millisecond)
 		if c == nil || err != nil {
 			break
 		}
@@ -108,7 +108,7 @@ func (p *CHPool) closeInActiveConnection() bool {
 			continue
 		}
 
-		_ = p.Release(c)
+		_ = p.releaseConn(c)
 		break
 	}
 	return true
@@ -126,6 +126,18 @@ func (p *CHPool) getAvailableConn(t time.Duration) (conn *Connection, err error)
 		break
 	}
 	return
+}
+
+func (p *CHPool) releaseConn(conn *Connection) error {
+	if p.isClosed {
+		_ = conn.Close()
+		p.currentActive--
+		return nil
+	}
+	conn.ts = time.Now().Unix()
+	p.pool <- conn
+	p.currentInUsed--
+	return nil
 }
 
 func (p *CHPool) openConnection() (*Connection, error) {
@@ -158,9 +170,22 @@ func (p *CHPool) AcquireWithTimeout(t time.Duration) (conn *Connection, err erro
 		err = errPoolClosed
 		return
 	}
-	conn, err = p.getAvailableConn(t)
-	if err != nil && p.currentActive < p.maxActive {
-		conn, err = p.openConnection()
+
+	attempt := 1
+	for ; attempt <= 5; attempt++ {
+		conn, err = p.getAvailableConn(t)
+		if conn != nil {
+			break
+		}
+		if err != nil && p.currentActive < p.maxActive {
+			conn, err = p.openConnection()
+			break
+		}
+	}
+
+	if attempt == 5 {
+		log.Println("Out of connection pool. It seems there are many connections that are taken over than 500ms")
+		err = errors.New("can not connect to database")
 	}
 
 	if conn != nil {
@@ -170,21 +195,13 @@ func (p *CHPool) AcquireWithTimeout(t time.Duration) (conn *Connection, err erro
 }
 
 func (p *CHPool) Acquire() (conn *Connection, err error) {
-	return p.AcquireWithTimeout(5 * time.Second)
+	return p.AcquireWithTimeout(100 * time.Millisecond)
 }
 
 func (p *CHPool) Release(conn *Connection) error {
 	p.Lock()
 	defer p.Unlock()
-	if p.isClosed {
-		_ = conn.Close()
-		p.currentActive--
-		return nil
-	}
-	conn.ts = time.Now().Unix()
-	p.pool <- conn
-	p.currentInUsed--
-	return nil
+	return p.releaseConn(conn)
 }
 
 func (p *CHPool) Close() error {

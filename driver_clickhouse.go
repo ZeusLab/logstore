@@ -103,7 +103,7 @@ func (d *DriverClickHouse) Collect(messages []InputLogPayload) error {
 			Timestamp:     v.Timestamp,
 			ContainerName: v.ContainerName,
 			Message:       v.Message,
-			Level:         v.Level,
+			Level:         LogLevelInt(v.Level),
 			ContextKeys:   v.Context.Keys(),
 			ContextValues: v.Context.Values(),
 		}

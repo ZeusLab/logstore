@@ -13,7 +13,7 @@ type LogEntry struct {
 	Timestamp     int64
 	Date          string
 	ContainerName string
-	Level         string
+	Level         int32
 	Message       string
 	ContextKeys   []string
 	ContextValues []string

@@ -4,7 +4,16 @@ type LogDriver interface {
 	Open(config DriverConfig) error
 	Collect(messages []InputLogPayload) error
 	FindAllTag() ([]string, error)
+	FetchingLog(opt QueryLogOption) ([]LogEntry, error)
 	Close() error
+}
+
+type QueryLogOption struct {
+	Tag       string
+	LogLevel  int32
+	StartTime int64
+	EndTime   int64
+	LastId    int64
 }
 
 type LogEntry struct {

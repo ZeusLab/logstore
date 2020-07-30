@@ -1,9 +1,11 @@
 package main
 
 import (
-	"fmt"
+	"context"
+	"encoding/json"
 	"github.com/gorilla/websocket"
 	"github.com/julienschmidt/httprouter"
+	"hermes/core"
 	"log"
 	"net/http"
 	"time"
@@ -14,25 +16,35 @@ type WsConnection struct {
 	send chan []byte
 }
 
+type WSData struct {
+	Topic string `json:"topic"`
+	Data  string `json:"data"`
+}
+
+type LogQuery struct {
+	Tag        string `json:"tag"`
+	LogLevel   int32  `json:"level"`
+	TimeOption `json:"time"`
+}
+
+type TimeOption struct {
+	Start int64 `json:"start"`
+	End   int64 `json:"end"`
+}
+
+const (
+	TopicPing  = "ping"
+	TopicQuery = "query"
+)
+
 func (c *WsConnection) read() {
-	defer func() {
-		_ = c.ws.Close()
-	}()
-	pongWait := 30 * time.Second
-	c.ws.SetReadLimit(1048576)
-	err := c.ws.SetReadDeadline(time.Now().Add(pongWait))
-	if err != nil {
-		log.Println(err)
-		return
-	}
-	c.ws.SetPongHandler(func(string) error {
-		err = c.ws.SetReadDeadline(time.Now().Add(pongWait));
+	c.ws.SetReadLimit(32 * 1024)
+	for {
+		err := c.ws.SetReadDeadline(time.Now().Add(30 * time.Second))
 		if err != nil {
 			log.Println(err)
+			return
 		}
-		return err
-	})
-	for {
 		msgType, msg, err := c.ws.ReadMessage()
 		if err != nil {
 			log.Println(err)
@@ -41,24 +53,70 @@ func (c *WsConnection) read() {
 			}
 			break
 		}
-		log.Printf("receive from %s msg with type = %s and payload = %s\n", c.ws.RemoteAddr(), msgType, string(msg))
-		fmt.Printf("sent back to %s a msg: %s\n", c.ws.RemoteAddr(), string(msg))
-
-		// Write message back to browser
-		c.send <- msg
-		//process message
-		//send back tp c.send
+		if msgType != websocket.TextMessage {
+			log.Printf("receive unexpected type of message %d\n", msgType)
+			continue
+		}
+		var wsData WSData
+		err = json.Unmarshal(msg, &wsData)
+		if err != nil {
+			log.Printf("can not unmarshal data from client %v. Discard connection\n", err)
+			break
+		}
+		log.Printf("receive command '%s' of topic '%s' from client %s\n", wsData.Data, wsData.Topic, c.ws.RemoteAddr())
+		switch wsData.Topic {
+		case TopicPing:
+			log.Printf("sent pong to %s\n", c.ws.RemoteAddr())
+			c.send <- msg
+			break
+		case TopicQuery:
+			var query LogQuery
+			err = json.Unmarshal([]byte(wsData.Data), &query)
+			if err != nil {
+				log.Printf("Can not unmarshal query from client %s\n", c.ws.RemoteAddr())
+				return
+			}
+			if core.StrIsEmpty(query.Tag){
+				return
+			}
+			entries, err := mainStorage.FetchingLog(core.QueryLogOption{
+				Tag: query.Tag,
+				LogLevel: query.LogLevel,
+				StartTime: query.Start,
+				EndTime: query.End,
+			})
+			if err != nil {
+				log.Printf("Can not unmarshal query from client %s\n", c.ws.RemoteAddr())
+				return
+			}
+			log.Println(entries)
+			break
+		default:
+			break
+		}
 	}
 }
 
-func (c *WsConnection) write() {
-	defer func() {
-		close(c.send)
-	}()
-	for {
-		bytes := <-c.send
-		_ = c.ws.WriteMessage(websocket.TextMessage, bytes)
+func (c *WsConnection) write(ctx context.Context) {
+	exit := false
+	for !exit {
+		select {
+		case bytes := <-c.send:
+			_ = c.ws.WriteMessage(websocket.TextMessage, bytes)
+			break
+		case <-ctx.Done():
+			if ctx.Err() != nil {
+				exit = true
+			}
+			break
+		}
 	}
+	log.Println("close connection")
+}
+
+func (c *WsConnection) close() {
+	_ = c.ws.Close()
+	close(c.send)
 }
 
 var upgrader = websocket.Upgrader{
@@ -80,10 +138,11 @@ func webSocket(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		ws:   conn,
 		send: make(chan []byte, 256),
 	}
+	ctx, cancel := context.WithCancel(r.Context())
 	defer func() {
-		_ = wsc.ws.Close()
-		close(wsc.send)
+		cancel()
+		wsc.close()
 	}()
-	go wsc.write()
+	go wsc.write(ctx)
 	wsc.read()
 }

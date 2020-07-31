@@ -1,10 +1,12 @@
 package core
 
+import "context"
+
 type LogDriver interface {
 	Open(config DriverConfig) error
 	Collect(messages []InputLogPayload) error
-	FindAllTag() ([]string, error)
-	FetchingLog(opt QueryLogOption) ([]LogEntry, error)
+	FindAllTag(ctx context.Context) ([]string, error)
+	FetchingLog(ctx context.Context, opt QueryLogOption) error
 	Close() error
 }
 
@@ -14,6 +16,8 @@ type QueryLogOption struct {
 	StartTime int64
 	EndTime   int64
 	LastId    int64
+	BatchSize int32
+	Response  chan OutputLogMessage
 }
 
 type LogEntry struct {

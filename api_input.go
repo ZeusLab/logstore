@@ -23,6 +23,7 @@ func collectLog(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 
 	tagValues := r.URL.Query()["tag"]
 	if tagValues == nil || len(tagValues) == 0 {
+		log.Println("missing tag")
 		return
 	}
 	tag := strings.TrimSpace(tagValues[0])

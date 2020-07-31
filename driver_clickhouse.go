@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	. "hermes/clickhouse"
@@ -112,7 +113,7 @@ func (d *DriverClickHouse) Collect(messages []InputLogPayload) error {
 	return c.Insert(entries)
 }
 
-func (d *DriverClickHouse) FindAllTag() ([]string, error) {
+func (d *DriverClickHouse) FindAllTag(ctx context.Context) ([]string, error) {
 	c, err := d.Pool.Acquire()
 	if err != nil {
 		return nil, err
@@ -126,9 +127,30 @@ func (d *DriverClickHouse) FindAllTag() ([]string, error) {
 		_ = d.Pool.Release(c)
 	}()
 
-	return c.GetAllTags()
+	return c.GetAllTags(ctx)
 }
 
 func (d *DriverClickHouse) Close() error {
 	return d.Pool.Close()
+}
+
+func (d *DriverClickHouse) FetchingLog(ctx context.Context, opt QueryLogOption) error {
+	c, err := d.Pool.Acquire()
+	if err != nil {
+		return err
+	}
+
+	if c == nil {
+		return errors.New("can not acquire connection")
+	}
+
+	defer func() {
+		_ = d.Pool.Release(c)
+	}()
+
+	err = c.GetLog(ctx, opt)
+	if err != nil {
+		log.Printf("get error %v while fetching log\n", err)
+	}
+	return nil
 }

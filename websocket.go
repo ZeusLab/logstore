@@ -7,6 +7,7 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"hermes/core"
 	"log"
+	"math"
 	"net/http"
 	"time"
 )
@@ -37,7 +38,7 @@ const (
 	TopicQuery = "query"
 )
 
-func (c *WsConnection) read() {
+func (c *WsConnection) read(ctx context.Context) {
 	c.ws.SetReadLimit(32 * 1024)
 	for {
 		err := c.ws.SetReadDeadline(time.Now().Add(30 * time.Second))
@@ -74,22 +75,58 @@ func (c *WsConnection) read() {
 			err = json.Unmarshal([]byte(wsData.Data), &query)
 			if err != nil {
 				log.Printf("Can not unmarshal query from client %s\n", c.ws.RemoteAddr())
-				return
+				break
 			}
-			if core.StrIsEmpty(query.Tag){
-				return
+			if core.StrIsEmpty(query.Tag) {
+				log.Println("missing tag in query option")
+				break
 			}
-			entries, err := mainStorage.FetchingLog(core.QueryLogOption{
-				Tag: query.Tag,
-				LogLevel: query.LogLevel,
+
+			response := make(chan core.OutputLogMessage)
+			go func(c context.Context, response chan core.OutputLogMessage, send chan []byte) {
+				exit := false
+				for !exit {
+					select {
+					case <-c.Done():
+						break
+					case msg := <-response:
+						if msg.Code != http.StatusOK {
+							close(response)
+							exit = true
+							break
+						}
+						bytes, err := json.Marshal(&msg)
+						if err != nil {
+							log.Printf("error %v while marshalling batch of message\n", err)
+							continue
+						}
+						wsData := WSData{
+							Topic: "logs",
+							Data:  string(bytes),
+						}
+						bytes, err = json.Marshal(wsData)
+						if err != nil {
+							log.Printf("error %v while marshalling batch of message\n", err)
+							continue
+						}
+						send <- bytes
+						break
+					}
+				}
+			}(ctx, response, c.send)
+
+			err := mainStorage.FetchingLog(ctx, core.QueryLogOption{
+				Tag:       query.Tag,
+				LogLevel:  query.LogLevel,
 				StartTime: query.Start,
-				EndTime: query.End,
+				EndTime:   query.End,
+				BatchSize: math.MaxInt32,
+				Response:  response,
 			})
 			if err != nil {
 				log.Printf("Can not unmarshal query from client %s\n", c.ws.RemoteAddr())
 				return
 			}
-			log.Println(entries)
 			break
 		default:
 			break
@@ -144,5 +181,5 @@ func webSocket(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		wsc.close()
 	}()
 	go wsc.write(ctx)
-	wsc.read()
+	wsc.read(ctx)
 }

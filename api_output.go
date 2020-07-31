@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"github.com/julienschmidt/httprouter"
@@ -30,7 +31,11 @@ func retrieveListOfTag(w http.ResponseWriter, r *http.Request, _ httprouter.Para
 			Message: "OK",
 		},
 	}
-	list, err := mainStorage.FindAllTag()
+	ctx, cancel := context.WithCancel(r.Context())
+	defer func() {
+		cancel()
+	}()
+	list, err := mainStorage.FindAllTag(ctx)
 	if err != nil {
 		response.Code = http.StatusInternalServerError
 		response.Message = err.Error()

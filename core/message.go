@@ -35,6 +35,31 @@ const (
 	LevelEmergencyInt int32 = 800
 )
 
+func LogLevelStr(level int32) string {
+	switch level {
+	case LevelDebugInt:
+		return LevelDebug
+	case LevelInfoInt:
+		return LevelInfo
+	case LevelNoticeInt:
+		return LevelNotice
+	case LevelWarningInt:
+		return LevelWarning
+	case LevelErrorInt:
+		return LevelError
+	case LevelCriticalInt:
+		return LevelCritical
+	case LevelAlertInt:
+		return LevelAlert
+	case LevelEmergencyInt:
+		return LevelEmergency
+	case LevelAllInt:
+	default:
+		return LevelAll
+	}
+	return LevelAll
+}
+
 func LogLevelInt(level string) int32 {
 	level = strings.ToUpper(level)
 	switch level {
@@ -87,13 +112,18 @@ func (m InputLogContext) Values() []string {
 
 /** Output */
 type OutputMessage struct {
-	Code    int32  `json:"code,omitempty"`
+	Code int32  `json:"code,omitempty"`
 	Message string `json:"message,omitempty"`
 }
 
 type OutputTagMessage struct {
 	OutputMessage
 	Data []string `json:"data,omitempty"`
+}
+
+type OutputLogMessage struct {
+	OutputMessage
+	Data []OutputLogPayload `json:"data,omitempty"`
 }
 
 type OutputLogPayload struct {

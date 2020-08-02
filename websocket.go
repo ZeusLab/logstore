@@ -7,7 +7,6 @@ import (
 	"github.com/julienschmidt/httprouter"
 	"hermes/core"
 	"log"
-	"math"
 	"net/http"
 	"time"
 )
@@ -120,7 +119,7 @@ func (c *WsConnection) read(ctx context.Context) {
 				LogLevel:  query.LogLevel,
 				StartTime: query.Start,
 				EndTime:   query.End,
-				BatchSize: math.MaxInt32,
+				BatchSize: 1000,
 				Response:  response,
 			})
 			if err != nil {
